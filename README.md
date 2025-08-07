@@ -22,11 +22,11 @@
 
 在运行此脚本之前，请确保你的系统已安装以下任一套工具：
 
-1.  **Podman** 和 **podman-compose**
+1. **Podman** 和 **podman-compose**
 
-2.  **Docker** 和新版 `docker compose` 插件
+2. **Docker** 和新版 `docker compose` 插件
 
-3.  **旧版 `docker-compose`**
+3. **旧版 `docker-compose`**
 
 此外，你还需要安装以下 Python 库。
 
@@ -36,11 +36,11 @@ pip3 install requests ruamel.yaml
 
 ## 配置
 
-在使用脚本之前，你必须配置 API 域名。打开脚本文件，找到以下行并填写你的 API 域名：
+在使用脚本之前，你必须配置 API 域名。打开脚本文件，找到[以下行](https://github.com/Nyasers/docker-updater/blob/main/docker-updater.py#L23-L24)并填写你的 API 域名：
 
 ```
-# TODO: 请在此处填写你的 API 域名，例如 "[https://docker-updater.workers.dev](https://docker-updater.workers.dev)"。
-DIGEST_API_BASE_URL = "[https://docker-updater.workers.dev](https://docker-updater.workers.dev)"
+# TODO: 请在此处填写你的 API 域名，例如 "https://api.example.com"。
+DIGEST_API_BASE_URL = ""
 ```
 
 这个 API 应该能够根据镜像名称和标签返回其最新的 SHA256 digest。
@@ -49,11 +49,11 @@ DIGEST_API_BASE_URL = "[https://docker-updater.workers.dev](https://docker-updat
 
 此项目附带一个 `worker.js` 脚本，用于在 Cloudflare Workers 上搭建镜像 digest 的查询 API。
 
-1.  请将 `worker.js` 部署到你的 Cloudflare Workers。
+1. 请将 `worker.js` 部署到你的 Cloudflare Workers。
 
-2.  部署成功后，你将获得一个 Workers 域名，例如 `https://docker-updater.workers.dev`。
+2. 部署成功后，你将获得一个 Workers 域名，例如 `https://api.example.com`。
 
-3.  将此域名完整地填入上方 Python 脚本的 `DIGEST_API_BASE_URL` 变量中。
+3. 将此域名完整地填入上方 Python 脚本的 `DIGEST_API_BASE_URL` 变量中。
 
 ## API 接口说明
 
@@ -66,26 +66,26 @@ DIGEST_API_BASE_URL = "[https://docker-updater.workers.dev](https://docker-updat
 
 * **`{tag}`**: 镜像的标签，如果为空，则默认为 `latest`。
 
-例如，对于镜像 `nginx:latest`，脚本会请求 `https://docker-updater.workers.dev/library/nginx/latest`。
-对于镜像 `myuser/myimage:v1.0`，脚本会请求 `https://docker-updater.workers.dev/myuser/myimage/v1.0`。
+例如，对于镜像 `nginx:latest`，脚本会请求 `https://api.example.com/library/nginx/latest`。
+对于镜像 `myuser/myimage:v1.0`，脚本会请求 `https://api.example.com/myuser/myimage/v1.0`。
 
 API 预期返回一个纯文本响应，内容为镜像的最新 SHA256 digest，例如：`sha256:abcdef123456...`。
 
 ## 使用方法
 
-1.  配置 `DIGEST_API_BASE_URL`。
+1. 配置 `DIGEST_API_BASE_URL`。
 
-2.  赋予脚本执行权限：
+2. 赋予脚本执行权限：
 
-   ```
-   chmod +x docker-updater.py
-   ```
+```
+chmod +x docker-updater.py
+```
 
-3.  直接运行脚本。脚本会自动查找并更新所有正在运行的 Compose 项目：
+3. 直接运行脚本。脚本会自动查找并更新所有正在运行的 Compose 项目：
 
-   ```
-   ./docker-updater.py
-   ```
+```
+./docker-updater.py
+```
 
 ## 贡献
 
