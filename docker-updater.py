@@ -280,13 +280,23 @@ def get_latest_digest(user, repo, tag):
     print(f"{COLOR_BLUE}正在从 {url} 获取 {printable_image_name} 的最新 digest...{COLOR_RESET}")
     try:
         response = requests.get(url, timeout=10)
+        
+        # 1. 检查响应状态码
         response.raise_for_status()
+
+        # 2. 检查 Content-Type，确保是纯文本
+        content_type = response.headers.get('Content-Type', '').split(';')[0].strip()
+        if content_type != 'text/plain':
+            print(f"{COLOR_YELLOW}警告: 从 {url} 获取到的响应类型不是 'text/plain'，而是 '{content_type}'。{COLOR_RESET}")
+            return None
+
+        # 3. 解析并检查 digest 格式
         digest = response.text.strip()
         if re.match(r"^sha256:[0-9a-f]{64}$", digest):
             print(f"{COLOR_GREEN}获取到最新 digest: {digest}{COLOR_RESET}")
             return digest
         else:
-            print(f"{COLOR_YELLOW}警告: 从 {url} 获取到无效的 digest 格式: {digest}{COLOR_RESET}")
+            print(f"{COLOR_YELLOW}警告: 从 {url} 获取到无效的 digest 格式: '{digest}'。{COLOR_RESET}")
             return None
     except requests.exceptions.RequestException as e:
         # 错误信息也使用统一的打印名称
