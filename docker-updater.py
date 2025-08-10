@@ -67,12 +67,11 @@ def run_command(command, cwd=None, tool_override=None, stream_output=False):
 
     if stream_output:
         try:
-            # 修复：直接将子进程的stdout和stderr连接到父进程的stdout和stderr
-            # 这是为了正确处理像 `docker pull` 这样的命令，
-            # 它们会使用回车符 `\r` 来更新同一行的进度条。
+            # 对于流式输出命令，直接将子进程的stdout和stderr连接到父进程的stdout和stderr
             process = subprocess.Popen(
                 actual_command,
                 cwd=cwd,
+                stdin=subprocess.DEVNULL
                 stdout=sys.stdout,
                 stderr=sys.stderr,
                 text=True,
