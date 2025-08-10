@@ -536,37 +536,70 @@ def main():
         
         if file_updated:
             print(f"\n{COLOR_CYAN}--- 正在执行更新步骤: 先 'pull' 最新镜像，再 'up' ---{COLOR_RESET}")
-            pull_success = True
             
-            # 步骤 2.4a: 为每个需要更新的服务单独执行 pull 命令
-            for service_name, s_info in services_with_valid_digest.items():
-                # 使用新函数构建带有 digest 的镜像字符串
-                new_image_full_string = build_image_string_with_digest(s_info['original_image_info'], s_info['new_digest'])
-                
-                # 执行 pull 命令，并启用实时输出
-                # 注意：这里我们通过 stream_output=True 来实时显示 pull 命令的进度条
-                pull_output, _ = run_command(["pull", new_image_full_string], stream_output=True)
+            # --- 新增: 回滚机制开始 ---
+            backup_file_path = compose_file_path + ".bak"
+            
+            try:
+                # 备份原始文件
+                print(f"{COLOR_BLUE}备份原始文件 '{compose_file_path}' 到 '{backup_file_path}'...{COLOR_RESET}")
+                # 使用 shutil.copyfile 是一个更健壮的方式，但为了不增加新的库依赖，
+                # 这里我们直接使用Python的文件读写来复制内容。
+                with open(compose_file_path, 'r', encoding='utf-8') as f_in, open(backup_file_path, 'w', encoding='utf-8') as f_out:
+                    f_out.write(f_in.read())
 
-                if pull_output is None:
-                    print(f"{COLOR_RED}镜像 '{new_image_full_string}' pull 失败，将跳过此项目。{COLOR_RESET}")
-                    pull_success = False
-                    break # 任何一个镜像拉取失败，就停止此项目的更新
-            
-            if pull_success:
-                print(f"{COLOR_GREEN}所有镜像 pull 命令执行完成。{COLOR_RESET}")
+                pull_success = True
                 
-                # 步骤 2.4b: 运行 compose up -d
-                # 显式指定 compose 文件，以支持非默认文件名的项目
-                up_command = ["compose", "-f", compose_file_name, "up", "-d"]
-                up_output, _ = run_command(up_command)
+                # 步骤 2.4a: 为每个需要更新的服务单独执行 pull 命令
+                for service_name, s_info in services_with_valid_digest.items():
+                    # 使用新函数构建带有 digest 的镜像字符串
+                    new_image_full_string = build_image_string_with_digest(s_info['original_image_info'], s_info['new_digest'])
+                    
+                    # 执行 pull 命令，并启用实时输出
+                    pull_output, _ = run_command(["pull", new_image_full_string], stream_output=True)
+
+                    if pull_output is None:
+                        print(f"{COLOR_RED}镜像 '{new_image_full_string}' pull 失败。{COLOR_RESET}")
+                        pull_success = False
+                        break # 任何一个镜像拉取失败，就停止此项目的更新
                 
-                if up_output is not None:
-                    print(f"{COLOR_GREEN}Compose up 命令执行完成。{COLOR_RESET}")
-                    print(up_output) # 这里的输出通常是 Compose 自身的日志，不额外着色
+                if pull_success:
+                    print(f"{COLOR_GREEN}所有镜像 pull 命令执行完成。{COLOR_RESET}")
+                    
+                    # 步骤 2.4b: 运行 compose up -d
+                    # 显式指定 compose 文件，以支持非默认文件名的项目
+                    up_command = ["compose", "-f", compose_file_name, "up", "-d"]
+                    up_output, _ = run_command(up_command)
+                    
+                    if up_output is not None:
+                        print(f"{COLOR_GREEN}Compose up 命令执行完成。{COLOR_RESET}")
+                        print(up_output) # 这里的输出通常是 Compose 自身的日志，不额外着色
+                    else:
+                        print(f"{COLOR_RED}Compose up 命令执行失败。{COLOR_RESET}")
                 else:
-                    print(f"{COLOR_RED}Compose up 命令执行失败。{COLOR_RESET}")
-            else:
-                print(f"{COLOR_YELLOW}由于 pull 命令失败，已跳过此项目的 'compose up'。{COLOR_RESET}")
+                    print(f"{COLOR_YELLOW}由于 pull 命令失败，正在回滚文件...{COLOR_RESET}")
+                    # 回滚操作
+                    os.remove(compose_file_path) # 删除已修改的文件
+                    os.rename(backup_file_path, compose_file_path) # 恢复备份
+                    print(f"{COLOR_GREEN}文件已成功回滚到原始状态。{COLOR_RESET}")
+
+            except Exception as e:
+                print(f"{COLOR_RED}在执行拉取或部署过程中发生意外错误: {e}{COLOR_RESET}")
+                if os.path.exists(backup_file_path):
+                    print(f"{COLOR_YELLOW}正在尝试回滚文件 '{compose_file_path}'...{COLOR_RESET}")
+                    # 确保原始文件存在，如果不存在则直接重命名备份文件
+                    if os.path.exists(compose_file_path):
+                        os.remove(compose_file_path)
+                    os.rename(backup_file_path, compose_file_path)
+                    print(f"{COLOR_GREEN}文件已成功回滚到原始状态。{COLOR_RESET}")
+                else:
+                    print(f"{COLOR_RED}回滚失败，备份文件不存在。{COLOR_RESET}")
+            finally:
+                # 清理备份文件
+                if os.path.exists(backup_file_path):
+                    print(f"{COLOR_BLUE}清理备份文件 '{backup_file_path}'...{COLOR_RESET}")
+                    os.remove(backup_file_path)
+            # --- 回滚机制结束 ---
         else:
             if update_status == "no_change":
                 print(f"{COLOR_YELLOW}文件 '{compose_file_path}' 无需更新，跳过拉取和重新部署。{COLOR_RESET}")
