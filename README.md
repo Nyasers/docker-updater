@@ -36,7 +36,7 @@ pip3 install requests ruamel.yaml
 
 ## 配置
 
-在使用脚本之前，你必须配置 API 域名。打开脚本文件，找到[以下行](https://github.com/Nyasers/docker-updater/blob/main/docker-updater.py#L23-L24)并填写你的 API 域名：
+在使用脚本之前，你必须配置 API 域名。打开脚本文件，找到[以下行](https://github.com/Nyasers/docker-updater/blob/main/docker-updater.py#L23-L25)并填写你的 API 域名：
 
 ```
 # TODO: 请在此处填写你的 API 域名，例如 "https://api.example.com"。
