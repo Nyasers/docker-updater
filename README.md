@@ -40,6 +40,7 @@ pip3 install requests ruamel.yaml
 
 ```
 # TODO: 请在此处填写你的 API 域名，例如 "https://api.example.com"。
+# 这个 API 用于根据镜像名和标签获取其最新的 digest 值。
 DIGEST_API_BASE_URL = ""
 ```
 
