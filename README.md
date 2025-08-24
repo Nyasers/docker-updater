@@ -12,7 +12,7 @@
 
 * **智能 YAML 处理**：使用 `ruamel.yaml` 库，在更新 `image` 字段时保留文件中原有的注释和格式。
 
-* **自动部署**：更新文件后，自动运行 `docker compose up -d --force-recreate` 命令来重新部署服务。
+* **自动部署**：更新文件后，自动运行 `docker compose up -d` 命令来重新部署服务。
 
 * **非侵入式**：仅更新配置文件中指定了 `image` 的服务。
 
