@@ -36,12 +36,10 @@ pip3 install requests ruamel.yaml
 
 ## 配置
 
-在使用脚本之前，你必须配置 API 域名。打开脚本文件，找到[以下行](https://github.com/Nyasers/docker-updater/blob/main/docker-updater.py#L23-L25)并填写你的 API 域名：
+在使用脚本之前，你必须配置 API 域名。打开脚本文件，找到[以下行](https://github.com/Nyasers/docker-updater/blob/main/config.json#L2)并填写你的 API 域名：
 
 ```
-# TODO: 请在此处填写你的 API 域名，例如 "https://api.example.com"。
-# 这个 API 用于根据镜像名和标签获取其最新的 digest 值。
-DIGEST_API_BASE_URL = ""
+  "DIGEST_API_BASE_URL": ""
 ```
 
 这个 API 应该能够根据镜像名称和标签返回其最新的 SHA256 digest。
