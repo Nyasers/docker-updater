@@ -36,15 +36,29 @@ Config = AppConfig()
 def load_config():
     """
     从 config.json 文件加载配置，并将其存储到配置实例中。
-    如果文件不存在或格式错误，脚本将退出。
+    如果文件不存在，将创建一个模板文件并退出。
     """
     # 获取脚本所在的目录，而不是当前工作目录
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_file = os.path.join(script_dir, "config.json")
     
+    # 定义模板内容，默认值为空
+    template_content = {
+        "DIGEST_API_BASE_URL": ""
+    }
+    
     print(f"{COLORS.CYAN}正在加载配置文件 '{config_file}'...{COLORS.RESET}")
+    
     if not os.path.exists(config_file):
-        print(f"{COLORS.RED}错误: 配置文件 '{config_file}' 不存在。请创建它并填写正确的 API URL。{COLORS.RESET}")
+        print(f"{COLORS.YELLOW}警告: 配置文件 '{config_file}' 不存在。正在为您创建一个模板文件...{COLORS.RESET}")
+        try:
+            with open(config_file, 'w', encoding='utf-8') as f:
+                file_content = json.dumps(template_content, indent=4, ensure_ascii=False)
+                f.write(file_content)
+                
+            print(f"{COLORS.GREEN}模板文件已创建。请编辑 '{config_file}'，填写正确的 API URL，然后再次运行脚本。{COLORS.RESET}")
+        except Exception as e:
+            print(f"{COLORS.RED}错误: 创建模板文件失败: {e}{COLORS.RESET}")
         sys.exit(1)
 
     try:
@@ -57,7 +71,12 @@ def load_config():
     except Exception as e:
         print(f"{COLORS.RED}错误: 读取配置文件 '{config_file}' 时发生错误: {e}{COLORS.RESET}")
         sys.exit(1)
-
+    
+    # 验证步骤：检查 API 地址是否为空
+    if not Config.digest_api_base_url or Config.digest_api_base_url.isspace():
+        print(f"{COLORS.RED}错误: 配置文件 '{config_file}' 中的 'DIGEST_API_BASE_URL' 字段为空。{COLORS.RESET}")
+        print(f"{COLORS.YELLOW}请在继续之前填写正确的 API URL。{COLORS.RESET}")
+        sys.exit(1)
 
 def run_command(command, cwd=None, capture_output=False):
     """
@@ -65,28 +84,28 @@ def run_command(command, cwd=None, capture_output=False):
     此函数统一使用 subprocess.Popen，并始终关闭输入流。
     Args:
         command (list): 要执行的命令列表。
-                        例如：对于 'docker pull'，输入 ['pull', 'nginx:latest']
-                        对于 'docker compose up'，输入 ['compose', 'up', '-d']
+                          例如：对于 'docker pull'，输入 ['pull', 'nginx:latest']
+                          对于 'docker compose up'，输入 ['compose', 'up', '-d']
         cwd (str, optional): 命令执行的工作目录。默认为 None (当前目录)。
         capture_output (bool, optional): 是否捕获输出并返回。如果为 False，则将输出流式传输到控制台。
-                                        默认为 False。
+                                         默认为 False。
     Returns:
         tuple: (str, list) - (命令的标准输出, 实际执行的命令列表)，如果命令执行失败则返回 (None, actual_command)。
     """
     actual_command = []
 
     # 根据配置中的 CONTAINER_TOOL 的值来决定使用哪个容器工具
-    if Config.container_tool == "podman":
-        if command[0] == "compose":
+    if command[0] == "compose":
+        if Config.container_tool == "podman":
             actual_command = ["podman-compose"] + command[1:]
-        else:
-            actual_command = ["podman"] + command
-    elif Config.container_tool == "docker-legacy":
-        actual_command = ["docker-compose"] + command
-    else:  # 'docker'
-        if command[0] == "compose":
+        elif Config.container_tool == "docker-legacy":
+            actual_command = ["docker-compose"] + command
+        else:  # 'docker'
             actual_command = ["docker", "compose"] + command[1:]
-        else:
+    else: # 'pull', 'ps', 'inspect', etc.
+        if Config.container_tool == "podman":
+            actual_command = ["podman"] + command
+        else:  # 'docker' or 'docker-legacy'
             actual_command = ["docker"] + command
 
     print(f"{COLORS.BLUE}正在运行 '{' '.join(actual_command)}'...{COLORS.RESET}")
@@ -176,27 +195,33 @@ def get_compose_projects():
 
     if Config.container_tool == "podman":
         print(f"{COLORS.CYAN}正在获取 Podman Compose 项目列表...{COLORS.RESET}")
-        ids_output, _ = run_command(["ps", "-a", "--filter", "label=io.podman.compose.project", "--format", "{{.ID}}"] , capture_output=True)
+        # podman ps -a --filter label=io.podman.compose.project --format json
+        output, _ = run_command(["ps", "-a", "--filter", "label=io.podman.compose.project", "--format", "json"], capture_output=True)
 
-        if not ids_output:
+        if not output:
             print(f"{COLORS.YELLOW}未找到正在运行的 Podman Compose 项目。{COLORS.RESET}")
             return []
+        
+        try:
+            containers_data = json.loads(output)
+        except json.JSONDecodeError as e:
+            print(f"{COLORS.RED}解析 Podman ps 输出失败: {e}{COLORS.RESET}")
+            return []
 
-        container_ids = ids_output.split('\n')
+        for container in containers_data:
+            labels = container.get("Labels", {})
+            workdir = labels.get("com.docker.compose.project.working_dir")
+            config_files_str = labels.get("com.docker.compose.project.config_files")
 
-        for container_id in container_ids:
-            # 检查是否有与 Compose 相关的标签
-            workdir_output, _ = run_command(["inspect", "-f", "{{ index .Config.Labels \"com.docker.compose.project.working_dir\" }}", container_id], capture_output=True)
-            config_file_output, _ = run_command(["inspect", "-f", "{{ index .Config.Labels \"com.docker.compose.project.config_files\" }}", container_id], capture_output=True)
-
-            if workdir_output and workdir_output != "<no value>" and config_file_output and config_file_output != "<no value>":
-                compose_file_path = os.path.join(workdir_output, config_file_output)
-                if os.path.exists(compose_file_path):
-                    compose_files.add(compose_file_path)
-                else:
-                    print(f"{COLORS.YELLOW}警告: 找到 Compose 项目但配置文件 '{compose_file_path}' 不存在。{COLORS.RESET}")
+            if workdir and config_files_str:
+                for config_file in config_files_str.split(','):
+                    compose_file_path = os.path.join(workdir, config_file)
+                    if os.path.exists(compose_file_path):
+                        compose_files.add(compose_file_path)
+                    else:
+                        print(f"{COLORS.YELLOW}警告: 找到 Compose 项目但配置文件 '{compose_file_path}' 不存在。{COLORS.RESET}")
             else:
-                print(f"{COLORS.YELLOW}警告: 容器 '{container_id}' 缺少 Compose 相关的标签，跳过。{COLORS.RESET}")
+                print(f"{COLORS.YELLOW}警告: 容器 '{container['ID']}' 缺少 Compose 相关的标签，跳过。{COLORS.RESET}")
 
     else:
         # Docker 环境下的项目发现
@@ -242,7 +267,7 @@ def parse_image_string(image_full_name):
     # 优先匹配 digest
     digest_match = re.search(r"(@sha256:[0-9a-f]{64})$", image_full_name)
     if digest_match:
-        digest = digest_match.group(1)
+        digest = digest_match.group(0)[1:]
         image_str_no_digest = image_full_name[:digest_match.start()]
     else:
         image_str_no_digest = image_full_name
@@ -273,7 +298,7 @@ def parse_image_string(image_full_name):
         repo = user_repo_parts[1]
     else:
         # 对于如 'nginx' 这样的官方镜像，user 默认为 'library'
-        user = "library"
+        user = repo_path if '/' not in repo_path and '.' not in repo_path and ':' not in repo_path else "library"
         repo = repo_path
 
     return {
@@ -368,33 +393,6 @@ def get_latest_digest(user, repo, tag):
         print(f"{COLORS.RED}获取 {printable_image_name_for_error} 的 digest 失败: {e}{COLORS.RESET}")
         return None
 
-def get_local_image_digest(image_name_with_tag):
-    """
-    使用 docker inspect 命令获取本地镜像的 digest。
-    Args:
-        image_name_with_tag (str): 镜像的名称和标签，例如 'nginx:latest'。
-    Returns:
-        str: 本地镜像的 digest 字符串 (例如 'sha256:...'), 如果未找到则返回 None。
-    """
-    print(f"{COLORS.BLUE}正在检查本地镜像 '{image_name_with_tag}' 的 digest...{COLORS.RESET}")
-    output, _ = run_command(["inspect", "--format", "{{.RepoDigests}}", image_name_with_tag], capture_output=True)
-
-    if not output:
-        print(f"{COLORS.YELLOW}警告: 未找到本地镜像 '{image_name_with_tag}' 的 digest。{COLORS.RESET}")
-        return None
-
-    # 从输出中解析 digest
-    # `docker inspect` 的 RepoDigests 返回格式为 `[my-image@sha256:digest]`
-    digest_match = re.search(r"sha256:[0-9a-f]{64}", output)
-    if digest_match:
-        digest = f"sha256:{digest_match.group(0)}"
-        print(f"{COLORS.GREEN}找到本地 digest: {digest}{COLORS.RESET}")
-        return digest
-    else:
-        print(f"{COLORS.YELLOW}警告: 无法从本地镜像 '{image_name_with_tag}' 的输出中解析 digest。{COLORS.RESET}")
-        return None
-
-
 def update_docker_compose_file(compose_file_path, services_to_update, yaml_parser):
     """
     更新 docker-compose.yml 文件，将镜像替换为带最新 digest 的格式。
@@ -422,11 +420,9 @@ def update_docker_compose_file(compose_file_path, services_to_update, yaml_parse
 
             new_image_full_string = build_image_string_with_digest(info['original_image_info'], new_digest)
 
-            # Note: This block is now redundant because the main loop handles the check.
-            # However, it's a good fail-safe.
             if 'image' in data['services'][service_name] and data['services'][service_name]['image'] == new_image_full_string:
                 display_image_name_for_log = get_printable_image_name(None, info['original_image_info']['user'], info['original_image_info']['repo'], info['original_image_info']['tag'])
-                print(f"服务 '{service_name}' 的镜像 '{display_image_name_for_log}' {COLORS.GREEN}已是最新 digest，无需更新。{COLORS.RESET}")
+                # 不再打印本地镜像已是最新版本的信息
             else:
                 data['services'][service_name]['image'] = new_image_full_string
                 print(f"更新服务 '{service_name}' 的镜像: '{original_image_raw}' -> {COLORS.GREEN}'{new_image_full_string}'{COLORS.RESET}")
@@ -449,9 +445,148 @@ def prune_old_images():
     修剪悬空镜像（即没有标签且未被任何容器使用的镜像）。
     """
     print(f"\n{COLORS.CYAN}--- 正在修剪旧版本镜像...{COLORS.RESET}")
-    run_command(["image", "prune", "-a", "--force"])
+    run_command(["image", "prune", "-af"])
     print(f"{COLORS.GREEN}旧版本镜像修剪完成。{COLORS.RESET}")
 
+def get_services_to_update(compose_file_path, yaml_parser):
+    """
+    从 Compose 文件中获取需要更新的服务列表。
+    Args:
+        compose_file_path (str): Compose 文件的路径。
+        yaml_parser (ruamel.yaml.YAML): YAML 解析器实例。
+    Returns:
+        dict: 包含 {service_name: {original_image_info, new_digest}} 的字典。
+    """
+    services_to_update = {}
+    
+    print(f"{COLORS.BLUE}正在从 {os.path.basename(compose_file_path)} 文件中获取容器镜像信息...{COLORS.RESET}")
+    try:
+        with open(compose_file_path, 'r', encoding='utf-8') as f:
+            compose_config = yaml_parser.load(f)
+    except Exception as e:
+        print(f"{COLORS.RED}读取或解析 Compose 文件 '{compose_file_path}' 失败: {e}，跳过此项目。{COLORS.RESET}")
+        return services_to_update
+
+    if 'services' in compose_config:
+        for service_name, service_details in compose_config['services'].items():
+            original_image_raw = service_details.get('image')
+            if not original_image_raw:
+                print(f"{COLORS.YELLOW}服务 '{service_name}' 未指定 'image'，跳过。{COLORS.RESET}")
+                continue
+            
+            original_image_info = parse_image_string(original_image_raw)
+            
+            # 获取 yml 文件中现有的 digest
+            yml_digest = original_image_info.get('digest')
+            print(f"{COLORS.GREEN}获取到本地 digest: {yml_digest}{COLORS.RESET}")
+
+            # 检查远程最新 digest
+            api_tag = original_image_info['tag'] if original_image_info['tag'] else 'latest'
+            latest_digest = get_latest_digest(original_image_info['user'], original_image_info['repo'], api_tag)
+            
+            if not latest_digest:
+                print(f"{COLORS.YELLOW}警告: 无法获取服务 '{service_name}' 的最新 digest，跳过此服务。{COLORS.RESET}")
+                continue
+
+            if yml_digest != latest_digest:
+                print(f"{COLORS.YELLOW}服务 '{service_name}' 的镜像需要更新。{COLORS.RESET}")
+                services_to_update[service_name] = {
+                    'original_image_info': original_image_info,
+                    'new_digest': latest_digest
+                }
+            else:
+                print(f"{COLORS.GREEN}服务 '{service_name}' 的镜像已是最新版本。{COLORS.RESET}")
+    
+    return services_to_update
+
+def perform_deployment(compose_file_path, services_to_update, yaml_parser):
+    """
+    执行容器部署的完整流程，包括拉取、停止、更新文件和启动。
+    Args:
+        compose_file_path (str): Compose 文件的路径。
+        services_to_update (dict): 需要更新的服务字典。
+        yaml_parser (ruamel.yaml.YAML): YAML 解析器实例。
+    """
+    backup_file_path = compose_file_path + ".bak"
+    
+    print(f"\n{COLORS.CYAN}--- 正在执行部署步骤: 'pull' -> 'down' -> 'yml' 更新 -> 'up' ---{COLORS.RESET}")
+
+    # 1. 预先拉取所有需要更新的镜像
+    pull_success = True
+    for service_name, s_info in services_to_update.items():
+        new_image_full_string = build_image_string_with_digest(s_info['original_image_info'], s_info['new_digest'])
+        
+        pull_output, _ = run_command(["pull", new_image_full_string])
+
+        if pull_output is None:
+            print(f"{COLORS.RED}镜像 '{new_image_full_string}' pull 失败，{COLORS.YELLOW}终止部署。{COLORS.RESET}")
+            pull_success = False
+            break
+    
+    if not pull_success:
+        return
+
+    print(f"{COLORS.GREEN}所有新镜像 pull 命令执行完成。{COLORS.RESET}")
+    
+    # 2. 备份文件并执行 down & update
+    file_updated_flag = False
+    try:
+        # 备份原始文件以防万一
+        print(f"{COLORS.BLUE}备份原始文件 '{compose_file_path}' 到 '{backup_file_path}'...{COLORS.RESET}")
+        shutil.copyfile(compose_file_path, backup_file_path)
+
+        # a. 执行 down 命令
+        down_command = ["compose", "down", "--remove-orphans"]
+        print(f"{COLORS.CYAN}正在停止并移除旧容器...{COLORS.RESET}")
+        down_output, _ = run_command(down_command)
+        if down_output is None:
+            raise RuntimeError("Compose down failed")
+        print(f"{COLORS.GREEN}旧容器已移除。{COLORS.RESET}")
+
+        # b. 修改 yml 文件
+        file_updated, update_status = update_docker_compose_file(compose_file_path, services_to_update, yaml_parser)
+        file_updated_flag = file_updated
+
+        if not file_updated:
+            if update_status == "no_change":
+                print(f"{COLORS.YELLOW}文件 '{compose_file_path}' 无需更新，部署将继续。{COLORS.RESET}")
+            else: # update_status == "error"
+                 raise RuntimeError("Failed to update compose file.")
+    
+    except Exception as e:
+        print(f"{COLORS.RED}在执行部署过程中发生致命错误：{e}{COLORS.RESET}")
+        if os.path.exists(backup_file_path):
+            print(f"{COLORS.YELLOW}正在尝试回滚文件 '{compose_file_path}' 以恢复服务...{COLORS.RESET}")
+            try:
+                if os.path.exists(compose_file_path):
+                    os.remove(compose_file_path)
+                shutil.move(backup_file_path, compose_file_path)
+                print(f"{COLORS.GREEN}文件已成功回滚到原始状态。{COLORS.RESET}")
+
+            except OSError as rollback_e:
+                print(f"{COLORS.RED}回滚文件时发生错误: {rollback_e}{COLORS.RESET}")
+                print(f"{COLORS.RED}请手动恢复文件 '{backup_file_path}' 到 '{compose_file_path}'。{COLORS.RESET}")
+        else:
+            print(f"{COLORS.RED}回滚失败，备份文件不存在。{COLORS.RESET}")
+    
+    # 3. 重新启动容器
+    print(f"{COLORS.BLUE}正在尝试重新启动容器...{COLORS.RESET}")
+    up_command = ["compose", "up", "-d"]
+    up_output, _ = run_command(up_command)
+
+    if up_output is not None:
+        print(f"{COLORS.GREEN}Compose up 命令执行完成。{COLORS.RESET}")
+    else:
+        print(f"{COLORS.RED}Compose up 命令执行失败。{COLORS.RESET}")
+    
+    # 4. 清理备份文件
+    if os.path.exists(backup_file_path):
+        print(f"{COLORS.BLUE}清理备份文件 '{backup_file_path}'...{COLORS.RESET}")
+        try:
+            os.remove(backup_file_path)
+        except OSError as cleanup_e:
+            print(f"{COLORS.RED}清理备份文件失败: {cleanup_e}{COLORS.RESET}")
+    
 def main():
     """主函数，协调整个镜像更新过程。"""
     load_config()
@@ -476,144 +611,25 @@ def main():
     for compose_file_path in compose_files:
         project_dir = os.path.dirname(compose_file_path)
         compose_file_name = os.path.basename(compose_file_path)
-        backup_file_path = compose_file_path + ".bak"
 
         print(f"\n{COLORS.CYAN}--- 处理项目目录: {project_dir} ---{COLORS.RESET}")
 
         try:
-            try:
-                os.chdir(project_dir)
-                print(f"{COLORS.BLUE}已切换到目录: {os.getcwd()}{COLORS.RESET}")
-            except OSError as e:
-                print(f"{COLORS.RED}无法切换到目录 '{project_dir}': {e}，跳过此项目。{COLORS.RESET}")
-                continue
+            os.chdir(project_dir)
+            print(f"{COLORS.BLUE}已切换到目录: {os.getcwd()}{COLORS.RESET}")
+        except OSError as e:
+            print(f"{COLORS.RED}无法切换到目录 '{project_dir}': {e}，跳过此项目。{COLORS.RESET}")
+            continue
 
-            print(f"{COLORS.BLUE}正在从 {compose_file_name} 文件中获取容器镜像信息...{COLORS.RESET}")
-            try:
-                with open(compose_file_name, 'r', encoding='utf-8') as f:
-                    compose_config = yaml.load(f)
-            except Exception as e:
-                print(f"{COLORS.RED}读取或解析 Compose 文件 '{compose_file_name}' 失败: {e}，跳过此项目。{COLORS.RESET}")
-                continue
+        services_to_update = get_services_to_update(compose_file_path, yaml)
 
-            target_image_api_keys_to_digest = {}
-            services_to_update = {}
-            
-            # 用于检查是否需要执行部署的标志
-            any_updates_needed = False
+        if not services_to_update:
+            print(f"{COLORS.GREEN}所有镜像都已是最新版本，无需执行部署。{COLORS.RESET}")
+            continue
 
-            if 'services' in compose_config:
-                for service_name, service_details in compose_config['services'].items():
-                    original_image_raw = service_details.get('image')
-                    if not original_image_raw:
-                        print(f"{COLORS.YELLOW}服务 '{service_name}' 未指定 'image'，跳过。{COLORS.RESET}")
-                        continue
-                    
-                    original_image_info = parse_image_string(original_image_raw)
-                    
-                    # 检查本地 digest
-                    local_digest = get_local_image_digest(original_image_raw)
-                    
-                    # 检查远程最新 digest
-                    api_tag = original_image_info['tag'] if original_image_info['tag'] else 'latest'
-                    latest_digest = get_latest_digest(original_image_info['user'], original_image_info['repo'], api_tag)
-                    
-                    if not latest_digest:
-                        print(f"{COLORS.YELLOW}警告: 无法获取服务 '{service_name}' 的最新 digest，跳过此服务。{COLORS.RESET}")
-                        continue
+        perform_deployment(compose_file_path, services_to_update, yaml)
 
-                    if latest_digest != local_digest:
-                        print(f"{COLORS.YELLOW}服务 '{service_name}' 的镜像需要更新。{COLORS.RESET}")
-                        services_to_update[service_name] = {
-                            'original_image_info': original_image_info,
-                            'new_digest': latest_digest
-                        }
-                        any_updates_needed = True
-                    else:
-                        print(f"{COLORS.GREEN}服务 '{service_name}' 的镜像已是最新版本，无需更新。{COLORS.RESET}")
-
-            if not any_updates_needed:
-                print(f"{COLORS.GREEN}所有镜像都已是最新版本，无需执行部署。{COLORS.RESET}")
-                continue
-
-            # --- 执行部署流程 ---
-            print(f"\n{COLORS.CYAN}--- 正在执行部署步骤: 'pull' -> 'down' -> 'yml' 更新 -> 'up' ---{COLORS.RESET}")
-
-            # 1. 预先拉取所有需要更新的镜像
-            pull_success = True
-            for service_name, s_info in services_to_update.items():
-                new_image_full_string = build_image_string_with_digest(s_info['original_image_info'], s_info['new_digest'])
-                
-                pull_output, _ = run_command(["pull", new_image_full_string])
-
-                if pull_output is None:
-                    print(f"{COLORS.RED}镜像 '{new_image_full_string}' pull 失败，{COLORS.YELLOW}终止部署。{COLORS.RESET}")
-                    pull_success = False
-                    break
-            
-            if not pull_success:
-                continue
-
-            print(f"{COLORS.GREEN}所有新镜像 pull 命令执行完成。{COLORS.RESET}")
-            
-            # 2. 备份文件并执行部署，如果失败则回滚
-            try:
-                # 备份原始文件以防万一
-                print(f"{COLORS.BLUE}备份原始文件 '{compose_file_path}' 到 '{backup_file_path}'...{COLORS.RESET}")
-                shutil.copyfile(compose_file_path, backup_file_path)
-
-                # a. 执行 down 命令
-                down_command = ["compose", "down", "--remove-orphans"]
-                print(f"{COLORS.CYAN}正在停止并移除旧容器...{COLORS.RESET}")
-                down_output, _ = run_command(down_command)
-                if down_output is None:
-                    print(f"{COLORS.RED}Compose down 命令执行失败。{COLORS.RESET}")
-                    raise RuntimeError("Compose down failed")
-                print(f"{COLORS.GREEN}旧容器已移除。{COLORS.RESET}")
-
-                # b. 修改 yml 文件
-                file_updated, update_status = update_docker_compose_file(compose_file_path, services_to_update, yaml)
-
-                if not file_updated:
-                    if update_status == "no_change":
-                        print(f"{COLORS.YELLOW}文件 '{compose_file_path}' 无需更新，跳过。{COLORS.RESET}")
-                    raise RuntimeError("File not updated or no changes to make.")
-                
-                # c. 启动新容器
-                up_command = ["compose", "up", "-d"]
-                up_output, _ = run_command(up_command)
-
-                if up_output is not None:
-                    print(f"{COLORS.GREEN}Compose up 命令执行完成。{COLORS.RESET}")
-                    print(up_output)
-                    # 4. 清理旧镜像
-                    prune_old_images()
-                else:
-                    print(f"{COLORS.RED}Compose up 命令执行失败。{COLORS.RESET}")
-                    raise RuntimeError("Compose up failed")
-            
-            except Exception as e:
-                print(f"{COLORS.RED}在执行部署过程中发生意外错误: {e}{COLORS.RESET}")
-                if os.path.exists(backup_file_path):
-                    print(f"{COLORS.YELLOW}正在尝试回滚文件 '{compose_file_path}'...{COLORS.RESET}")
-                    try:
-                        if os.path.exists(compose_file_path):
-                            os.remove(compose_file_path)
-                        shutil.move(backup_file_path, compose_file_path)
-                        print(f"{COLORS.GREEN}文件已成功回滚到原始状态。{COLORS.RESET}")
-                    except OSError as rollback_e:
-                        print(f"{COLORS.RED}回滚文件时发生错误: {rollback_e}{COLORS.RESET}")
-                        print(f"{COLORS.RED}请手动恢复文件 '{backup_file_path}' 到 '{compose_file_path}'。{COLORS.RESET}")
-                else:
-                    print(f"{COLORS.RED}回滚失败，备份文件不存在。{COLORS.RESET}")
-
-        finally:
-            if os.path.exists(backup_file_path):
-                print(f"{COLORS.BLUE}清理备份文件 '{backup_file_path}'...{COLORS.RESET}")
-                try:
-                    os.remove(backup_file_path)
-                except OSError as cleanup_e:
-                    print(f"{COLORS.RED}清理备份文件失败: {cleanup_e}{COLORS.RESET}")
+    prune_old_images()
 
     print(f"\n{COLORS.CYAN}所有 Compose 项目处理完毕。{COLORS.RESET}")
 
