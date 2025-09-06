@@ -15,9 +15,9 @@ class COLORS(str, Enum):
     用于在控制台输出中着色的 ANSI 颜色代码。
     """
     RESET = "\033[0m"
-    GREEN = "\033[92m"   # 成功
+    GREEN = "\033[92m"    # 成功
     YELLOW = "\033[93m"  # 警告
-    RED = "\033[91m"     # 错误
+    RED = "\033[91m"      # 错误
     CYAN = "\033[96m"    # 信息/标题
     BLUE = "\033[94m"    # 正在进行的操作
 
@@ -254,51 +254,50 @@ def parse_image_string(image_full_name):
     """
     解析镜像字符串，提取镜像源、用户、仓库名、标签和 digest。
     Args:
-        image_full_name (str): 完整的镜像字符串，例如 'nginx:latest', 'myuser/myimage', 'myregistry.com/myuser/myimage:tag', 'myuser/myimage@sha256:abc'
+        image_full_name (str): 完整的镜像字符串
     Returns:
         dict: 包含 'registry', 'user', 'repo', 'tag', 'digest', 'raw' 的字典。
     """
     registry = None
-    user = "library"
+    user = None
     repo = image_full_name
     tag = ""
     digest = None
 
-    # 优先匹配 digest
+    # 1. 优先匹配 digest
     digest_match = re.search(r"(@sha256:[0-9a-f]{64})$", image_full_name)
     if digest_match:
         digest = digest_match.group(0)[1:]
-        image_str_no_digest = image_full_name[:digest_match.start()]
+        image_str = image_full_name[:digest_match.start()]
     else:
-        image_str_no_digest = image_full_name
+        image_str = image_full_name
 
-    # 其次匹配 tag
-    tag_match = re.search(r":([^/]+)$", image_str_no_digest)
+    # 2. 其次匹配 tag
+    tag_match = re.search(r":([^/]+)$", image_str)
     if tag_match:
         tag = tag_match.group(1)
-        image_str_no_tag_no_digest = image_str_no_digest[:tag_match.start()]
+        image_str_no_tag = image_str[:tag_match.start()]
     else:
-        tag = ""
-        image_str_no_tag_no_digest = image_str_no_digest
+        image_str_no_tag = image_str
 
-    # 最后匹配 registry 和 user
-    parts = image_str_no_tag_no_digest.split('/', 1)
+    # 3. 最后匹配 registry 和 user/repo
+    parts = image_str_no_tag.split('/', 1)
 
     # 检查第一个部分是否是 registry，通常包含 '.' 或 ':'
-    if len(parts) > 1 and ('.' in parts[0] or ':' in parts[0]) and parts[0] != "localhost":
+    if len(parts) > 1 and ('.' in parts[0] or ':' in parts[0]):
         registry = parts[0]
         repo_path = parts[1]
     else:
         registry = None
-        repo_path = image_str_no_tag_no_digest
+        repo_path = image_str_no_tag
 
+    # 检查 repo_path 是否包含用户
     if '/' in repo_path:
         user_repo_parts = repo_path.split('/', 1)
         user = user_repo_parts[0]
         repo = user_repo_parts[1]
     else:
-        # 对于如 'nginx' 这样的官方镜像，user 默认为 'library'
-        user = repo_path if '/' not in repo_path and '.' not in repo_path and ':' not in repo_path else "library"
+        user = None
         repo = repo_path
 
     return {
@@ -316,7 +315,7 @@ def get_printable_image_name(registry, user, repo, tag):
     在日志中不显示 registry。
     """
     image_base_name_parts = []
-    if user != "library":
+    if user:
         image_base_name_parts.append(user)
         image_base_name_parts.append("/")
     image_base_name_parts.append(repo)
@@ -343,7 +342,7 @@ def build_image_string_with_digest(image_info, new_digest):
         new_image_full_string_parts.append(image_info['registry'])
         new_image_full_string_parts.append("/")
 
-    if image_info['user'] != "library":
+    if image_info['user']:
         new_image_full_string_parts.append(image_info['user'])
         new_image_full_string_parts.append("/")
 
@@ -366,7 +365,13 @@ def get_latest_digest(user, repo, tag):
     Returns:
     str: 镜像的最新 digest 字符串 (例如 'sha256:...'), 如果获取失败则返回 None。
     """
-    url = f"{Config.digest_api_base_url}/{user}/{repo}/{tag}"
+    path_parts = []
+    if user:
+        path_parts.append(user)
+    path_parts.append(repo)
+    path_parts.append(tag if tag else "latest")
+
+    url = f"{Config.digest_api_base_url}/{'/'.join(path_parts)}"
 
     printable_image_name = get_printable_image_name(None, user, repo, tag)
 
