@@ -91,6 +91,7 @@ async function handleRequest(request) {
     } catch (e) {
       // If the first attempt failed and it's a 404 with a two-segment path,
       // try again by prepending 'library/'.
+      // Re-split url.pathname here because it may have been modified above (e.g., line 82).
       const retryPathSegments = url.pathname.split('/').filter(p => p);
       if (
         e.message.includes('Not Found') &&
