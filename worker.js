@@ -74,29 +74,34 @@ async function fetchDockerDigest(user, repo, tag) {
 async function handleRequest(request) {
   try {
     const url = new URL(request.url);
+    const pathSegments = url.pathname.split('/').filter(p => p);
+
+    // If there is only one path segment and it's not 'library',
+    // assume it's an official image and prepend 'library/'.
+    if (pathSegments.length === 1 && pathSegments[0] !== 'library') {
+        url.pathname = `/library/${pathSegments[0]}`;
+    }
+
     let digest;
     
-    // First, try to fetch the digest with the original path.
-    // This will handle non-official images like `/myuser/myrepo`.
+    // First, try to fetch the digest with the current path.
     try {
       const { user, repo, tag } = parseRequestPath(url.pathname);
       digest = await fetchDockerDigest(user, repo, tag);
     } catch (e) {
-      // If the first attempt failed, check if it's a 404 and a two-segment path.
-      // This is the fallback for official images like `/nginx/latest`.
-      const pathSegments = url.pathname.split('/').filter(p => p);
+      // If the first attempt failed and it's a 404 with a two-segment path,
+      // try again by prepending 'library/'.
+      const retryPathSegments = url.pathname.split('/').filter(p => p);
       if (
         e.message.includes('Not Found') &&
-        pathSegments.length === 2 &&
-        pathSegments[0] !== 'library' &&
-        pathSegments[0].trim() !== '' &&
-        pathSegments[1].trim() !== ''
+        retryPathSegments.length === 2 &&
+        retryPathSegments[0] !== 'library'
       ) {
-        const newPathname = `/library/${pathSegments.join('/')}`;
+        const newPathname = `/library/${retryPathSegments.join('/')}`;
         const { user, repo, tag } = parseRequestPath(newPathname);
         digest = await fetchDockerDigest(user, repo, tag);
       } else {
-        // If the error is not a 404 or the path is not a two-segment path, re-throw it.
+        // Otherwise, re-throw the original error.
         throw e;
       }
     }
