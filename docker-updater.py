@@ -15,9 +15,9 @@ class COLORS(str, Enum):
     用于在控制台输出中着色的 ANSI 颜色代码。
     """
     RESET = "\033[0m"
-    GREEN = "\033[92m"    # 成功
+    GREEN = "\033[92m"   # 成功
     YELLOW = "\033[93m"  # 警告
-    RED = "\033[91m"      # 错误
+    RED = "\033[91m"     # 错误
     CYAN = "\033[96m"    # 信息/标题
     BLUE = "\033[94m"    # 正在进行的操作
 
@@ -256,7 +256,7 @@ def parse_image_string(image_full_name):
     Args:
         image_full_name (str): 完整的镜像字符串
     Returns:
-        dict: 包含 'registry', 'user', 'repo', 'tag', 'digest', 'raw' 的字典。
+        dict: 包含 'registry', 'user', 'repo', 'tag', 'digest', 'raw', 'repopath' 的字典。
     """
     registry = None
     user = None
@@ -282,23 +282,23 @@ def parse_image_string(image_full_name):
 
     # 3. 最后匹配 registry 和 user/repo
     parts = image_str_no_tag.split('/', 1)
-
+    
     # 检查第一个部分是否是 registry，通常包含 '.' 或 ':'
     if len(parts) > 1 and ('.' in parts[0] or ':' in parts[0]):
         registry = parts[0]
-        repo_path = parts[1]
+        repopath = parts[1]
     else:
         registry = None
-        repo_path = image_str_no_tag
-
-    # 检查 repo_path 是否包含用户
-    if '/' in repo_path:
-        user_repo_parts = repo_path.split('/', 1)
+        repopath = image_str_no_tag
+    
+    # 从 repopath 中分离出 user 和 repo
+    if '/' in repopath:
+        user_repo_parts = repopath.split('/', 1)
         user = user_repo_parts[0]
         repo = user_repo_parts[1]
     else:
         user = None
-        repo = repo_path
+        repo = repopath
 
     return {
         'registry': registry,
@@ -306,7 +306,8 @@ def parse_image_string(image_full_name):
         'repo': repo,
         'tag': tag,
         'digest': digest,
-        'raw': image_full_name
+        'raw': image_full_name,
+        'repopath': repopath
     }
 
 def get_printable_image_name(registry, user, repo, tag):
@@ -342,11 +343,7 @@ def build_image_string_with_digest(image_info, new_digest):
         new_image_full_string_parts.append(image_info['registry'])
         new_image_full_string_parts.append("/")
 
-    if image_info['user']:
-        new_image_full_string_parts.append(image_info['user'])
-        new_image_full_string_parts.append("/")
-
-    new_image_full_string_parts.append(image_info['repo'])
+    new_image_full_string_parts.append(image_info['repopath'])
 
     if image_info['tag']:
         new_image_full_string_parts.append(f":{image_info['tag']}")
@@ -355,25 +352,21 @@ def build_image_string_with_digest(image_info, new_digest):
 
     return "".join(new_image_full_string_parts)
 
-def get_latest_digest(user, repo, tag):
+def get_latest_digest(repopath, tag):
     """
     从你配置的 API 获取特定镜像标签的最新 digest。
     Args:
-    user (str): 镜像的用户或组织名。
-    repo (str): 镜像的仓库名。
+    repopath (str): 镜像的仓库路径，包含可选的用户前缀，例如 'nginx' 或 'myuser/myimage'。
     tag (str): 镜像的标签。如果为 '' (空字符串)，表示 'latest'。
     Returns:
     str: 镜像的最新 digest 字符串 (例如 'sha256:...'), 如果获取失败则返回 None。
     """
-    path_parts = []
-    if user:
-        path_parts.append(user)
-    path_parts.append(repo)
-    path_parts.append(tag if tag else "latest")
+    api_tag = tag if tag else "latest"
+    url = f"{Config.digest_api_base_url}/{repopath}/{api_tag}"
 
-    url = f"{Config.digest_api_base_url}/{'/'.join(path_parts)}"
-
-    printable_image_name = get_printable_image_name(None, user, repo, tag)
+    # get_printable_image_name helper now uses repopath
+    image_info_for_print = parse_image_string(repopath)
+    printable_image_name = get_printable_image_name(None, image_info_for_print['user'], image_info_for_print['repo'], tag)
 
     print(f"{COLORS.BLUE}正在从 {url} 获取 {printable_image_name} 的最新 digest...{COLORS.RESET}")
     try:
@@ -394,7 +387,7 @@ def get_latest_digest(user, repo, tag):
             print(f"{COLORS.YELLOW}警告: 从 {url} 获取到无效的 digest 格式: '{digest}'。{COLORS.RESET}")
             return None
     except requests.exceptions.RequestException as e:
-        printable_image_name_for_error = get_printable_image_name(None, user, repo, tag)
+        printable_image_name_for_error = get_printable_image_name(None, image_info_for_print['user'], image_info_for_print['repo'], tag)
         print(f"{COLORS.RED}获取 {printable_image_name_for_error} 的 digest 失败: {e}{COLORS.RESET}")
         return None
 
@@ -487,7 +480,7 @@ def get_services_to_update(compose_file_path, yaml_parser):
 
             # 检查远程最新 digest
             api_tag = original_image_info['tag'] if original_image_info['tag'] else 'latest'
-            latest_digest = get_latest_digest(original_image_info['user'], original_image_info['repo'], api_tag)
+            latest_digest = get_latest_digest(original_image_info['repopath'], api_tag)
             
             if not latest_digest:
                 print(f"{COLORS.YELLOW}警告: 无法获取服务 '{service_name}' 的最新 digest，跳过此服务。{COLORS.RESET}")
