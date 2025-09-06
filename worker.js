@@ -85,7 +85,13 @@ async function handleRequest(request) {
       // If the first attempt failed, check if it's a 404 and a two-segment path.
       // This is the fallback for official images like `/nginx/latest`.
       const pathSegments = url.pathname.split('/').filter(p => p);
-      if (e.message.includes('Not Found') && pathSegments.length === 2 && pathSegments[0] !== 'library') {
+      if (
+        e.message.includes('Not Found') &&
+        pathSegments.length === 2 &&
+        pathSegments[0] !== 'library' &&
+        pathSegments[0].trim() !== '' &&
+        pathSegments[1].trim() !== ''
+      ) {
         const newPathname = `/library/${pathSegments.join('/')}`;
         const { user, repo, tag } = parseRequestPath(newPathname);
         digest = await fetchDockerDigest(user, repo, tag);
