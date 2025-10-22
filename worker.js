@@ -51,22 +51,31 @@ function parseRequestPath(pathname) {
  * @param {string} user 镜像的用户名 (e.g., 'library' 或 'myuser')
  * @param {string} repo 镜像的仓库名 (e.g., 'nginx')
  * @param {string} tag 镜像的标签 (e.g., 'latest')
+ * @param {string | null} authToken 可选的认证令牌 (e.g., Bearer token)
  * @returns {Promise<string>} 返回镜像的 digest
  * @throws {Error} 如果 API 请求或响应失败则抛出错误
  */
-async function fetchV2Digest(registryUrl, user, repo, tag) {
+async function fetchV2Digest(registryUrl, user, repo, tag, authToken) {
   // 构造 repo path。对于官方镜像（Docker Hub），user是'library'，路径只有'repo'。
   const repoPath = user === 'library' ? repo : `${user}/${repo}`;
   // V2 Manifest Endpoint 格式: https://<registry>/v2/<repo_path>/manifests/<tag>
   const targetUrl = `https://${registryUrl}/v2/${repoPath}/manifests/${tag}`;
   
-  // V2 API 的标准 Accept 头部，用于请求 Manifest V2 格式
+  // V2 API 的标准 Accept 头部
+  const headers = { 
+    // 请求 Manifest V2 格式，这是获取 Docker-Content-Digest 的标准方式
+    'Accept': 'application/vnd.docker.distribution.manifest.v2+json'
+  };
+
+  // 如果提供了 AuthToken，则添加到请求头
+  if (authToken) {
+      // 传递给上游仓库的认证信息使用 Bearer 格式
+      headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
   const newRequest = new Request(targetUrl, {
     method: 'GET',
-    headers: { 
-      // 请求 Manifest V2 格式，这是获取 Docker-Content-Digest 的标准方式
-      'Accept': 'application/vnd.docker.distribution.manifest.v2+json'
-    },
+    headers: headers,
     redirect: 'follow'
   });
 
@@ -77,7 +86,7 @@ async function fetchV2Digest(registryUrl, user, repo, tag) {
 
   // 检查响应状态是否成功
   if (!response.ok) {
-    // 捕获 Docker Hub 的 4xx/5xx 错误，并附带状态码
+    // 捕获 4xx/5xx 错误，并附带状态码
     const statusText = response.statusText || `Status ${response.status}`;
     let errorMessage = `Upstream error: ${statusText} from ${registryUrl}`;
     
@@ -141,19 +150,19 @@ function createSuccessResponse(digest) {
 
 /**
  * 主处理函数，负责处理传入的请求
- * 支持格式:
- * 1. /<repo>/[tag] (默认 Docker Hub 官方镜像，自动回退到其他仓库) e.g., /nginx
- * 2. /<user>/<repo>/[tag] (默认 Docker Hub 用户镜像，自动回退到其他仓库) e.g., /myuser/myrepo
- * 3. /<registry>/<repo>/[tag] (Docker Hub 官方镜像简写) e.g., /docker/nginx/latest
- * 4. /<registry>/<user>/<repo>/[tag] (明确指定注册中心，4+ 段路径) e.g., /ghcr/myorg/myimage/latest
- * * **解决了用户/仓库名与注册中心别名冲突的问题：**
- * - 对于 /ghcr/myrepo 这样的 2 段或 3 段路径，脚本会优先走自动回退流程 (Case 2/3)，
- * 首先检查 Docker Hub 上是否存在名为 'ghcr' 的用户，从而避免冲突。
  * @param {Request} request 传入的请求对象
  * @returns {Response} 返回一个响应对象
  */
 async function handleRequest(request) {
   const url = new URL(request.url);
+  
+  // **认证逻辑：从 Authorization Header 中读取令牌 (标准和安全的方法)**
+  let authToken = request.headers.get('Authorization');
+  if (authToken && authToken.startsWith('Bearer ')) {
+      // 提取 Bearer 后面的实际令牌
+      authToken = authToken.substring(7).trim(); 
+  }
+  
   // 获取并过滤掉空字符串，得到路径段
   const pathSegments = url.pathname.split('/').filter(p => p !== '');
   
@@ -193,7 +202,7 @@ async function handleRequest(request) {
               tag = parsed.tag;
           }
           
-          digest = await fetchV2Digest(registryUrl, user, repo, tag);
+          digest = await fetchV2Digest(registryUrl, user, repo, tag, authToken); // 传入 authToken
           return createSuccessResponse(digest);
           
       } 
@@ -246,7 +255,7 @@ async function handleRequest(request) {
             }
 
             try {
-                digest = await fetchV2Digest(registry.url, attemptUser, attemptRepo, attemptTag);
+                digest = await fetchV2Digest(registry.url, attemptUser, attemptRepo, attemptTag, authToken); // 传入 authToken
                 return createSuccessResponse(digest); // 成功! 立即返回
             } catch (e) {
                 
@@ -264,7 +273,7 @@ async function handleRequest(request) {
                     attemptTag = initialRepo;  // 原始路径的第二段是 tag 名
 
                     try {
-                        digest = await fetchV2Digest(registry.url, attemptUser, attemptRepo, attemptTag);
+                        digest = await fetchV2Digest(registry.url, attemptUser, attemptRepo, attemptTag, authToken); // 传入 authToken
                         return createSuccessResponse(digest); // Docker Hub 官方成功! 立即返回
                     } catch (e2) {
                         errors.push(`Attempt failed on ${registry.alias} (Official fallback): ${e2.message}`);
@@ -273,10 +282,13 @@ async function handleRequest(request) {
                 
                 // 如果错误不是 404 (未找到)，则停止回退并抛出该特定错误。
                 if (!e.message.includes('Status 404') && !e.message.includes('Upstream error: Status 404')) {
-                    throw new Error(`Non-404 error from ${registry.alias}. Stopping fallback: ${e.message}`);
+                    // 只有在非 404/401 错误时才停止回退，因为 401 错误在其他仓库可能依然成功。
+                    if (!e.message.includes('Status 401')) {
+                        throw new Error(`Non-404/401 error from ${registry.alias}. Stopping fallback: ${e.message}`);
+                    }
                 }
                 
-                // 如果是 404，存储错误信息，继续尝试下一个注册中心。
+                // 如果是 404 或 401，存储错误信息，继续尝试下一个注册中心。
                 errors.push(`Attempt failed on ${registry.alias} (Standard): ${e.message}`);
             }
         }
