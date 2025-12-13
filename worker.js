@@ -1,7 +1,9 @@
 // Worker 脚本的入口点，监听 fetch 事件
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request));
-});
+export default {
+  async fetch(request, env, ctx) {
+    return handleRequest(request);
+  }
+}
 
 /**
  * 解析请求的 URL 路径，提取 user, repo 和 tag。
