@@ -1,4 +1,5 @@
 # https://developers.cloudflare.com/workers/wrangler/configuration/
 name = "docker-digest"
 main = "worker.js"
+type = "module"
 compatibility_date = "2025-08-24"
