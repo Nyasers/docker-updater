@@ -130,7 +130,7 @@ async function handleRequest(request) {
     });
   } catch (error) {
     const message = error.message;
-    let status = message.startsWith('Usage:') ? 400 : 404;
+    let status = message.startsWith('Usage:') ? 400 : message.includes('Too Many') ? 429 : 404;
     return new Response(JSON.stringify({ status, message }), { status: status, headers: { 'Content-Type': 'application/json' } });
   }
 }
