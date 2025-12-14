@@ -6,6 +6,7 @@ import re
 import requests
 import shutil
 import sys
+import platform
 from ruamel.yaml import YAML
 from enum import Enum
 
@@ -352,43 +353,69 @@ def build_image_string_with_digest(image_info, new_digest):
 
     return "".join(new_image_full_string_parts)
 
-def get_latest_digest(repopath, tag):
+def get_latest_digest(repopath, tag, arch=None, os=None):
     """
     从你配置的 API 获取特定镜像标签的最新 digest。
     Args:
     repopath (str): 镜像的仓库路径，包含可选的用户前缀，例如 'nginx' 或 'myuser/myimage'。
     tag (str): 镜像的标签。如果为 '' (空字符串)，表示 'latest'。
+    arch (str, optional): 镜像的架构，例如 'amd64' 或 'arm64'。
+    os (str, optional): 镜像的操作系统，例如 'linux' 或 'windows'。
     Returns:
     str: 镜像的最新 digest 字符串 (例如 'sha256:...'), 如果获取失败则返回 None。
     """
+    # 解析 repopath 得到 user 和 repo
+    image_info = parse_image_string(repopath)
+    user = image_info['user'] or 'library'
+    repo = image_info['repo']
     api_tag = tag if tag else "latest"
-    url = f"{Config.digest_api_base_url}/{repopath}/{api_tag}"
+    
+    # 使用新的 API URL 格式: /{user}/{repo}:{tag}
+    url = f"{Config.digest_api_base_url}/{user}/{repo}:{api_tag}"
 
-    # get_printable_image_name helper now uses repopath
-    image_info_for_print = parse_image_string(repopath)
-    printable_image_name = get_printable_image_name(None, image_info_for_print['user'], image_info_for_print['repo'], tag)
+    # 添加查询参数
+    params = {}
+    if arch:
+        params['architecture'] = arch
+    if os:
+        params['os'] = os
+
+    printable_image_name = get_printable_image_name(None, image_info['user'], image_info['repo'], tag)
 
     print(f"{COLORS.BLUE}正在从 {url} 获取 {printable_image_name} 的最新 digest...{COLORS.RESET}")
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
 
-        # 检查返回类型是否为纯文本
+        # 检查返回类型是否为 JSON
         content_type = response.headers.get('Content-Type', '').split(';')[0].strip()
-        if content_type != 'text/plain':
-            print(f"{COLORS.YELLOW}警告: 从 {url} 获取到的响应类型不是 'text/plain'，而是 '{content_type}'。{COLORS.RESET}")
+        if content_type != 'application/json':
+            print(f"{COLORS.YELLOW}警告: 从 {url} 获取到的响应类型不是 'application/json'，而是 '{content_type}'。{COLORS.RESET}")
             return None
 
-        digest = response.text.strip()
-        if re.match(r"^sha256:[0-9a-f]{64}$", digest):
+        # 解析 JSON 响应获取 digest
+        manifest_data = response.json()
+        
+        # 从 manifests 数组中获取第一个匹配的 digest
+        manifests = manifest_data.get('manifests', [])
+        digest = None
+        if manifests:
+            # 取第一个匹配的 digest
+            digest = manifests[0].get('digest')
+        
+        if digest and re.match(r"^sha256:[0-9a-f]{64}$", digest):
             print(f"{COLORS.GREEN}获取到最新 digest: {digest}{COLORS.RESET}")
             return digest
         else:
-            print(f"{COLORS.YELLOW}警告: 从 {url} 获取到无效的 digest 格式: '{digest}'。{COLORS.RESET}")
+            print(f"{COLORS.YELLOW}警告: 从 {url} 获取到的 JSON 数据中没有有效 digest。{COLORS.RESET}")
             return None
     except requests.exceptions.RequestException as e:
-        printable_image_name_for_error = get_printable_image_name(None, image_info_for_print['user'], image_info_for_print['repo'], tag)
+        printable_image_name_for_error = get_printable_image_name(None, image_info['user'], image_info['repo'], tag)
         print(f"{COLORS.RED}获取 {printable_image_name_for_error} 的 digest 失败: {e}{COLORS.RESET}")
+        return None
+    except json.JSONDecodeError as e:
+        printable_image_name_for_error = get_printable_image_name(None, image_info['user'], image_info['repo'], tag)
+        print(f"{COLORS.RED}解析 {printable_image_name_for_error} 的 API 响应失败: {e}{COLORS.RESET}")
         return None
 
 def update_docker_compose_file(compose_file_path, services_to_update, yaml_parser):
@@ -446,12 +473,14 @@ def prune_old_images():
     run_command(["image", "prune", "-af"])
     print(f"{COLORS.GREEN}旧版本镜像修剪完成。{COLORS.RESET}")
 
-def get_services_to_update(compose_file_path, yaml_parser):
+def get_services_to_update(compose_file_path, yaml_parser, arch=None, os=None):
     """
     从 Compose 文件中获取需要更新的服务列表。
     Args:
         compose_file_path (str): Compose 文件的路径。
         yaml_parser (ruamel.yaml.YAML): YAML 解析器实例。
+        arch (str, optional): 镜像的架构，例如 'amd64' 或 'arm64'。
+        os (str, optional): 镜像的操作系统，例如 'linux' 或 'windows'。
     Returns:
         dict: 包含 {service_name: {original_image_info, new_digest}} 的字典。
     """
@@ -480,7 +509,7 @@ def get_services_to_update(compose_file_path, yaml_parser):
 
             # 检查远程最新 digest
             api_tag = original_image_info['tag'] if original_image_info['tag'] else 'latest'
-            latest_digest = get_latest_digest(original_image_info['repopath'], api_tag)
+            latest_digest = get_latest_digest(original_image_info['repopath'], api_tag, arch, os)
             
             if not latest_digest:
                 print(f"{COLORS.YELLOW}警告: 无法获取服务 '{service_name}' 的最新 digest，跳过此服务。{COLORS.RESET}")
@@ -595,6 +624,16 @@ def main():
 
     check_tools_availability()
 
+    # 从系统获取架构和操作系统信息
+    system_arch = platform.machine().lower()
+    system_os = platform.system().lower()
+    
+    # 转换架构名称以匹配 Docker 的命名规范
+    if system_arch == 'x86_64':
+        system_arch = 'amd64'
+    elif system_arch == 'aarch64':
+        system_arch = 'arm64'
+
     yaml = YAML()
     yaml.preserve_quotes = True
     yaml.indent(mapping=2, sequence=4, offset=2)
@@ -619,7 +658,7 @@ def main():
             print(f"{COLORS.RED}无法切换到目录 '{project_dir}': {e}，跳过此项目。{COLORS.RESET}")
             continue
 
-        services_to_update = get_services_to_update(compose_file_path, yaml)
+        services_to_update = get_services_to_update(compose_file_path, yaml, system_arch, system_os)
 
         if not services_to_update:
             print(f"{COLORS.GREEN}所有镜像都已是最新版本，无需执行部署。{COLORS.RESET}")
