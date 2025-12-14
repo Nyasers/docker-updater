@@ -473,7 +473,7 @@ def prune_old_images():
     run_command(["image", "prune", "-af"])
     print(f"{COLORS.GREEN}旧版本镜像修剪完成。{COLORS.RESET}")
 
-def get_services_to_update(compose_file_path, yaml_parser, arch=None, os=None):
+def get_services_to_update(compose_file_path, yaml_parser, arch=None, _os=None):
     """
     从 Compose 文件中获取需要更新的服务列表。
     Args:
@@ -509,7 +509,7 @@ def get_services_to_update(compose_file_path, yaml_parser, arch=None, os=None):
 
             # 检查远程最新 digest
             api_tag = original_image_info['tag'] if original_image_info['tag'] else 'latest'
-            latest_digest = get_latest_digest(original_image_info['repopath'], api_tag, arch, os)
+            latest_digest = get_latest_digest(original_image_info['repopath'], api_tag, arch, _os)
             
             if not latest_digest:
                 print(f"{COLORS.YELLOW}警告: 无法获取服务 '{service_name}' 的最新 digest，跳过此服务。{COLORS.RESET}")
