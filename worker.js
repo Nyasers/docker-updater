@@ -66,7 +66,7 @@ async function fetchDockerToken(user, repo) {
  * @returns {Promise<object>} 返回镜像的 manifest
  * @throws {Error} 如果 API 请求或响应失败则抛出错误
  */
-async function fetchDockerManifest(user, repo, tag, platform = {}) {
+async function fetchDockerManifests(user, repo, tag, platform = {}) {
   const url = `https://registry-1.docker.io/v2/${user}/${repo}/manifests/${tag}`;
   const token = await fetchDockerToken(user, repo).catch(e => { throw e });
 
@@ -119,10 +119,11 @@ async function handleRequest(request) {
     };
 
     // 获取 manifest，传递查询参数
-    const manifest = await fetchDockerManifest(user, repo, tag, platform);
+    const manifests = await fetchDockerManifests(user, repo, tag, platform);
 
     // 返回 manifest 结果
-    return new Response(JSON.stringify(manifest), {
+    return new Response(JSON.stringify({status: 200, manifests}), {
+      status: 200,
       headers: {
         'Content-Type': 'application/json',
       }
