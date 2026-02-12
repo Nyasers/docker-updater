@@ -515,7 +515,38 @@ def get_latest_digest(repopath, tag, arch=None, os=None):
 
         try:
             # 构建 skopeo inspect 命令
-            skopeo_command = ["skopeo", "inspect", "--format", "json"]
+            # 只使用独立的 skopeo 命令
+            skopeo_command = ["skopeo", "inspect"]
+
+            # 尝试执行命令，检查是否支持 --format 选项
+            test_command = [
+                "skopeo",
+                "inspect",
+                "--format",
+                "json",
+                "docker://alpine:latest",
+            ]
+
+            # 直接使用 subprocess 执行测试命令，避免 run_command 自动添加 podman 前缀
+            try:
+                process = subprocess.Popen(
+                    test_command,
+                    cwd=None,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                )
+                stdout, stderr = process.communicate()
+
+                # 如果测试成功，说明支持 --format 选项
+                if process.returncode == 0:
+                    # 支持 --format 选项
+                    skopeo_command = ["skopeo", "inspect", "--format", "json"]
+            except Exception:
+                # 测试失败，使用基础命令
+                pass
 
             # 添加架构和操作系统参数（如果提供）
             if arch:
@@ -525,16 +556,60 @@ def get_latest_digest(repopath, tag, arch=None, os=None):
 
             skopeo_command.append(image_reference)
 
-            # 执行 skopeo 命令
-            result, _ = run_command(skopeo_command, capture_output=True)
+            # 直接使用 subprocess 执行 skopeo 命令，避免 run_command 自动添加 podman 前缀
+            print(
+                f"{COLORS.BLUE}正在运行 '{' '.join(skopeo_command)}'...{COLORS.RESET}"
+            )
+            try:
+                process = subprocess.Popen(
+                    skopeo_command,
+                    cwd=None,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                )
+                stdout, stderr = process.communicate()
 
-            if not result:
+                if process.returncode != 0:
+                    print(
+                        f"{COLORS.RED}命令执行失败，返回码: {process.returncode}{COLORS.RESET}"
+                    )
+                    print(f"{COLORS.RED}标准错误: {stderr}{COLORS.RESET}")
+                    print(f"{COLORS.YELLOW}镜像源失败，尝试下一个...{COLORS.RESET}")
+                    continue
+
+                result = stdout.strip()
+
+                if not result:
+                    print(f"{COLORS.YELLOW}镜像源失败，尝试下一个...{COLORS.RESET}")
+                    continue
+            except FileNotFoundError:
+                print(
+                    f"{COLORS.RED}错误: 命令 '{skopeo_command[0]}' 未找到。请确保该工具已安装并添加到 PATH。{COLORS.RESET}"
+                )
                 print(f"{COLORS.YELLOW}镜像源失败，尝试下一个...{COLORS.RESET}")
                 continue
 
             # 解析 JSON 输出获取 digest
-            manifest_data = json.loads(result)
-            digest = manifest_data.get("Digest")
+            try:
+                # 尝试直接解析 JSON 输出
+                manifest_data = json.loads(result)
+            except json.JSONDecodeError:
+                # 如果直接解析失败，尝试提取 JSON 部分
+                # 查找 JSON 开始和结束的位置
+                json_start = result.find("{")
+                json_end = result.rfind("}") + 1
+                if json_start != -1 and json_end != 0:
+                    json_output = result[json_start:json_end]
+                    manifest_data = json.loads(json_output)
+                else:
+                    print(f"{COLORS.YELLOW}无法解析 skopeo 输出。{COLORS.RESET}")
+                    continue
+
+            # 尝试获取 digest，检查不同大小写形式
+            digest = manifest_data.get("Digest") or manifest_data.get("digest")
 
             if digest and re.match(r"^sha256:[0-9a-f]{64}$", digest):
                 print(f"{COLORS.GREEN}获取到最新 digest: {digest}{COLORS.RESET}")
