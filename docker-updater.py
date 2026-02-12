@@ -52,7 +52,6 @@ def load_config():
     template_content = {
         "mirrors": {
             "docker.io": [
-                "hub.rat.dev",
                 "docker.1ms.run",
             ],
             "gcr.io": ["gcr.mirrors.ustc.edu.cn", "mirror.gcr.io"],
