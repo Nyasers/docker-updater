@@ -52,16 +52,18 @@ def load_config():
     template_content = {
         "mirrors": {
             "docker.io": [
-                "https://docker.mirrors.ustc.edu.cn",
-                "https://hub-mirror.c.163.com",
-                "https://registry.docker-cn.com",
+                "hub.rat.dev",
+                "docker.1ms.run",
+                "docker.mirrors.ustc.edu.cn",
+                "hub-mirror.c.163.com",
+                "registry.docker-cn.com",
             ],
-            "gcr.io": ["https://gcr.mirrors.ustc.edu.cn", "https://mirror.gcr.io"],
+            "gcr.io": ["gcr.mirrors.ustc.edu.cn", "mirror.gcr.io"],
             "k8s.gcr.io": [
-                "https://gcr.mirrors.ustc.edu.cn/google-containers",
-                "https://k8s.gcr.io",
+                "gcr.mirrors.ustc.edu.cn/google-containers",
+                "k8s.gcr.io",
             ],
-            "quay.io": ["https://quay.mirrors.ustc.edu.cn", "https://quay.io"],
+            "quay.io": ["quay.mirrors.ustc.edu.cn", "quay.io"],
         }
     }
 
@@ -517,42 +519,6 @@ def get_latest_digest(repopath, tag, arch=None, os=None):
             # 构建 skopeo inspect 命令
             # 只使用独立的 skopeo 命令
             skopeo_command = ["skopeo", "inspect"]
-
-            # 尝试执行命令，检查是否支持 --format 选项
-            test_command = [
-                "skopeo",
-                "inspect",
-                "--format",
-                "json",
-                "docker://alpine:latest",
-            ]
-
-            # 直接使用 subprocess 执行测试命令，避免 run_command 自动添加 podman 前缀
-            try:
-                process = subprocess.Popen(
-                    test_command,
-                    cwd=None,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    encoding="utf-8",
-                )
-                stdout, stderr = process.communicate()
-
-                # 如果测试成功，说明支持 --format 选项
-                if process.returncode == 0:
-                    # 支持 --format 选项
-                    skopeo_command = ["skopeo", "inspect", "--format", "json"]
-            except Exception:
-                # 测试失败，使用基础命令
-                pass
-
-            # 添加架构和操作系统参数（如果提供）
-            if arch:
-                skopeo_command.extend(["--override-arch", arch])
-            if os:
-                skopeo_command.extend(["--override-os", os])
 
             skopeo_command.append(image_reference)
 
