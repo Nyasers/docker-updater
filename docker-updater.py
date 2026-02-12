@@ -54,9 +54,6 @@ def load_config():
             "docker.io": [
                 "hub.rat.dev",
                 "docker.1ms.run",
-                "docker.mirrors.ustc.edu.cn",
-                "hub-mirror.c.163.com",
-                "registry.docker-cn.com",
             ],
             "gcr.io": ["gcr.mirrors.ustc.edu.cn", "mirror.gcr.io"],
             "k8s.gcr.io": [
