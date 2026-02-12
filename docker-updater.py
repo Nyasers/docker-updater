@@ -379,8 +379,13 @@ def parse_image_string(image_full_name):
     # 3. 最后匹配 registry 和 user/repo
     parts = image_str_no_tag.split("/", 1)
 
-    # 检查第一个部分是否是 registry，通常包含 '.' 或 ':'
-    if len(parts) > 1 and ("." in parts[0] or ":" in parts[0]):
+    # 检查第一个部分是否是 registry
+    # 规则：
+    # 1. 包含 '.' 或 ':' 的是 registry
+    # 2. localhost 或 127.0.0.1 也是 registry
+    if len(parts) > 1 and (
+        "." in parts[0] or ":" in parts[0] or parts[0] == "localhost"
+    ):
         registry = parts[0]
         repopath = parts[1]
     else:
