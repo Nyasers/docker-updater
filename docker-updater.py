@@ -697,6 +697,14 @@ def get_services_to_update(compose_file_path, yaml_parser, arch=None, _os=None):
 
             original_image_info = parse_image_string(original_image_raw)
 
+            # 检查是否是 localhost 或 127.0.0.1 下的镜像，如果是则跳过
+            registry = original_image_info.get("registry")
+            if registry and (registry == "localhost" or registry == "127.0.0.1"):
+                print(
+                    f"{COLORS.YELLOW}服务 '{service_name}' 使用的是本地镜像 ({registry})，跳过。{COLORS.RESET}"
+                )
+                continue
+
             # 获取 yml 文件中现有的 digest
             yml_digest = original_image_info.get("digest")
             print(f"{COLORS.GREEN}获取到本地 digest: {yml_digest}{COLORS.RESET}")
