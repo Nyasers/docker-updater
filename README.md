@@ -2,21 +2,25 @@
 
 ## 简介
 
-`docker-updater` 是一个 Python 脚本，旨在自动化 Docker 和 Podman Compose 项目的容器镜像更新流程。它通过调用一个可配置的 API 来获取最新的镜像 SHA256 digest，然后智能地更新 `docker-compose.yml` 文件，并自动重新部署容器，确保你的“latest”标签真正指向最新版本。
+`docker-updater` 是一个 Python 脚本，旨在自动化 Docker 和 Podman Compose 项目的容器镜像更新流程。它使用 Skopeo 工具直接获取最新的镜像 SHA256 digest，然后智能地更新 `docker-compose.yml` 文件，并自动重新部署容器，确保你的容器镜像始终使用最新版本。
 
 ## 主要特点
 
-* **跨平台兼容性**：自动检测并兼容 Podman Compose、新版 Docker Compose 和旧版 `docker-compose`。
+- **跨平台兼容性**：自动检测并兼容 Podman Compose、新版 Docker Compose 和旧版 `docker-compose`。
 
-* **自动化更新**：从外部 API 获取最新镜像 digest，无需手动查询。
+- **自动化更新**：使用 Skopeo 工具直接获取最新镜像 digest，无需手动查询。
 
-* **智能 YAML 处理**：使用 `ruamel.yaml` 库，在更新 `image` 字段时保留文件中原有的注释和格式。
+- **镜像源配置**：支持配置镜像源，加速镜像获取过程，并支持自动 fallback 功能。
 
-* **自动部署**：更新文件后，自动运行 `docker compose up -d` 命令来重新部署服务。
+- **智能 YAML 处理**：使用 `ruamel.yaml` 库，在更新 `image` 字段时保留文件中原有的注释和格式。
 
-* **非侵入式**：仅更新配置文件中指定了 `image` 的服务。
+- **完整部署流程**：自动执行 `pull` → `down` → 更新配置文件 → `up` 的完整部署流程。
 
-* **彩色日志输出**：通过 ANSI 颜色代码提供清晰的日志，方便快速识别成功、警告和错误信息。
+- **非侵入式**：仅更新配置文件中指定了 `image` 的服务，跳过本地镜像。
+
+- **彩色日志输出**：通过 ANSI 颜色代码提供清晰的日志，方便快速识别成功、警告和错误信息。
+
+- **自动清理**：完成更新后，自动修剪旧版本镜像，释放磁盘空间。
 
 ## 先决条件
 
@@ -28,53 +32,40 @@
 
 3. **旧版 `docker-compose`**
 
-此外，你还需要安装以下 Python 库。
+此外，你还需要安装：
+
+- **Skopeo**：用于获取镜像的 SHA256 digest
+  - Windows: `choco install skopeo`
+  - Linux: `sudo apt install skopeo` (或其他包管理器)
+  - macOS: `brew install skopeo`
+
+- **Python 库**：
 
 ```
-pip3 install requests ruamel.yaml
+pip3 install ruamel.yaml
 ```
 
 ## 配置
 
-在使用脚本之前，你必须配置 API 域名。打开脚本文件，找到[以下行](https://github.com/Nyasers/docker-updater/blob/main/config.json#L2)并填写你的 API 域名：
+脚本首次运行时会自动创建 `config.json` 配置文件，你可以根据需要修改它。配置文件格式如下：
 
+```json
+{
+  "mirrors": {
+    "docker.io": ["docker.1ms.run"]
+  }
+}
 ```
-  "DIGEST_API_BASE_URL": ""
-```
 
-这个 API 应该能够根据镜像名称和标签返回其最新的 SHA256 digest。
-
-## Cloudflare Workers 配置
-
-此项目附带一个 `worker.js` 脚本，用于在 Cloudflare Workers 上搭建镜像 digest 的查询 API。
-
-1. 请将 `worker.js` 部署到你的 Cloudflare Workers。
-
-2. 部署成功后，你将获得一个 Workers 域名，例如 `https://api.example.com`。
-
-3. 将此域名完整地填入上方 Python 脚本的 `DIGEST_API_BASE_URL` 变量中。
-
-## API 接口说明
-
-脚本会向以下格式的 URL 发送 GET 请求来获取镜像 digest：
-`[DIGEST_API_BASE_URL]/{user}/{repo}/{tag}`
-
-* **`{user}`**: 镜像的用户或组织名。
-
-* **`{repo}`**: 镜像的仓库名。
-
-* **`{tag}`**: 镜像的标签，如果为空，则默认为 `latest`。
-
-例如，对于镜像 `nginx:latest`，脚本会请求 `https://api.example.com/library/nginx/latest`。
-对于镜像 `myuser/myimage:v1.0`，脚本会请求 `https://api.example.com/myuser/myimage/v1.0`。
-
-API 预期返回一个纯文本响应，内容为镜像的最新 SHA256 digest，例如：`sha256:abcdef123456...`。
+- **`mirrors`**：镜像源配置，用于加速镜像获取
+  - 键：原始镜像仓库地址（如 `docker.io`）
+  - 值：镜像源地址数组，脚本会按顺序尝试使用这些镜像源，最后会尝试原始仓库
 
 ## 使用方法
 
-1. 配置 `DIGEST_API_BASE_URL`。
+1. 确保已安装所有先决条件。
 
-2. 赋予脚本执行权限：
+2. 赋予脚本执行权限（Linux/macOS）：
 
 ```
 chmod +x docker-updater.py
@@ -83,8 +74,36 @@ chmod +x docker-updater.py
 3. 直接运行脚本。脚本会自动查找并更新所有正在运行的 Compose 项目：
 
 ```
+# Linux/macOS
 ./docker-updater.py
+
+# Windows
+python docker-updater.py
 ```
+
+## 工作流程
+
+1. **加载配置**：读取 `config.json` 文件中的镜像源配置。
+
+2. **检测工具**：检测系统上可用的容器工具（Podman 或 Docker）。
+
+3. **检测 Skopeo**：确保 Skopeo 工具已安装。
+
+4. **获取项目**：自动发现所有正在运行的 Compose 项目。
+
+5. **处理项目**：对每个项目执行以下操作：
+   - 分析 `docker-compose.yml` 文件中的服务和镜像
+   - 使用 Skopeo 获取每个镜像的最新 digest
+   - 比较本地 digest 和远程最新 digest
+   - 对需要更新的镜像执行完整部署流程
+
+6. **清理**：修剪旧版本镜像，释放磁盘空间。
+
+## 注意事项
+
+- 脚本会自动跳过 `localhost` 或 `127.0.0.1` 下的本地镜像。
+- 脚本在更新过程中会创建备份文件，以防更新失败时可以回滚。
+- 若所有镜像源都失败，脚本会尝试使用原始镜像仓库。
 
 ## 贡献
 

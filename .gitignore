@@ -1,4 +1,2 @@
-.env*
-.dev.vars*
-.wrangler/
-node_modules/
+.trae/
+__pycache__/
