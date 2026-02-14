@@ -54,12 +54,6 @@ def load_config():
             "docker.io": [
                 "docker.1ms.run",
             ],
-            "gcr.io": ["gcr.mirrors.ustc.edu.cn", "mirror.gcr.io"],
-            "k8s.gcr.io": [
-                "gcr.mirrors.ustc.edu.cn/google-containers",
-                "k8s.gcr.io",
-            ],
-            "quay.io": ["quay.mirrors.ustc.edu.cn", "quay.io"],
         }
     }
 
