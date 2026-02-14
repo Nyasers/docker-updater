@@ -102,7 +102,7 @@ def load_config():
     print(f"{COLORS.GREEN}配置加载成功。{COLORS.RESET}")
 
 
-def run_command(command, cwd=None, capture_output=False):
+def run_docker(command, cwd=None, capture_output=False):
     """
     辅助函数：根据配置中的容器工具来运行 shell 命令。
     此函数统一使用 subprocess.Popen，并始终关闭输入流。
@@ -181,7 +181,7 @@ def run_command(command, cwd=None, capture_output=False):
         return None, actual_command
 
 
-def check_tools_availability():
+def check_docker_availability():
     """
     检查系统是存在 Podman、新版 Docker Compose 还是旧版 Docker Compose。
     并将结果设置到配置对象中。
@@ -200,7 +200,7 @@ def check_tools_availability():
     if shutil.which("docker"):
         try:
             # 尝试运行 "docker compose version" 来判断是否是新版
-            run_command(["compose", "version"], capture_output=True)
+            run_docker(["compose", "version"], capture_output=True)
             Config.container_tool = "docker"
             print(
                 f"{COLORS.GREEN}检测到 Docker 和新版 Docker Compose。将使用 'docker' 逻辑。{COLORS.RESET}"
@@ -265,7 +265,7 @@ def get_compose_projects():
     if Config.container_tool == "podman":
         print(f"{COLORS.CYAN}正在获取 Podman Compose 项目列表...{COLORS.RESET}")
         # podman ps -a --filter label=io.podman.compose.project --format json
-        output, _ = run_command(
+        output, _ = run_docker(
             [
                 "ps",
                 "-a",
@@ -312,10 +312,10 @@ def get_compose_projects():
         # Docker 环境下的项目发现
         if Config.container_tool == "docker-legacy":
             print(f"{COLORS.CYAN}正在获取旧版 Docker Compose 项目列表...{COLORS.RESET}")
-            output, _ = run_command(["ps", "--format", "json"], capture_output=True)
+            output, _ = run_docker(["ps", "--format", "json"], capture_output=True)
         else:  # 'docker'
             print(f"{COLORS.CYAN}正在获取新版 Docker Compose 项目列表...{COLORS.RESET}")
-            output, _ = run_command(
+            output, _ = run_docker(
                 ["compose", "ls", "--format", "json"], capture_output=True
             )
 
@@ -406,7 +406,7 @@ def parse_image_string(image_full_name):
     }
 
 
-def get_printable_image_name(registry, user, repo, tag):
+def get_printable_image_name(user, repo, tag):
     """
     辅助函数：根据镜像信息构建用于打印的名称。
     在日志中不显示 registry。
@@ -450,7 +450,7 @@ def build_image_string_with_digest(image_info, new_digest):
     return "".join(new_image_full_string_parts)
 
 
-def get_latest_digest(repopath, tag, arch=None, os=None):
+def get_latest_digest(repopath, tag):
     """
     使用 Skopeo 获取特定镜像标签的最新 digest。
     支持镜像源数组格式和自动 fallback 功能。
@@ -465,7 +465,7 @@ def get_latest_digest(repopath, tag, arch=None, os=None):
     # 解析 repopath 得到镜像信息
     image_info = parse_image_string(repopath)
     printable_image_name = get_printable_image_name(
-        None, image_info["user"], image_info["repo"], tag
+        image_info["user"], image_info["repo"], tag
     )
 
     # 构建镜像引用，支持镜像源配置
@@ -582,7 +582,7 @@ def get_latest_digest(repopath, tag, arch=None, os=None):
                 continue
         except Exception as e:
             printable_image_name_for_error = get_printable_image_name(
-                None, image_info["user"], image_info["repo"], tag
+                image_info["user"], image_info["repo"], tag
             )
             print(
                 f"{COLORS.YELLOW}使用此镜像源获取 {printable_image_name_for_error} 的 digest 失败: {e}，尝试下一个...{COLORS.RESET}"
@@ -656,7 +656,7 @@ def prune_old_images():
     修剪悬空镜像（即没有标签且未被任何容器使用的镜像）。
     """
     print(f"\n{COLORS.CYAN}--- 正在修剪旧版本镜像...{COLORS.RESET}")
-    run_command(["image", "prune", "-af"])
+    run_docker(["image", "prune", "-af"])
     print(f"{COLORS.GREEN}旧版本镜像修剪完成。{COLORS.RESET}")
 
 
@@ -712,9 +712,7 @@ def get_services_to_update(compose_file_path, yaml_parser, arch=None, _os=None):
             api_tag = (
                 original_image_info["tag"] if original_image_info["tag"] else "latest"
             )
-            latest_digest = get_latest_digest(
-                original_image_info["repopath"], api_tag, arch, _os
-            )
+            latest_digest = get_latest_digest(original_image_info["repopath"], api_tag)
 
             if not latest_digest:
                 print(
@@ -759,7 +757,7 @@ def perform_deployment(compose_file_path, services_to_update, yaml_parser):
             s_info["original_image_info"], s_info["new_digest"]
         )
 
-        pull_output, _ = run_command(["pull", new_image_full_string])
+        pull_output, _ = run_docker(["pull", new_image_full_string])
 
         if pull_output is None:
             print(
@@ -784,7 +782,7 @@ def perform_deployment(compose_file_path, services_to_update, yaml_parser):
         # a. 执行 down 命令
         down_command = ["compose", "down", "--remove-orphans"]
         print(f"{COLORS.CYAN}正在停止并移除旧容器...{COLORS.RESET}")
-        down_output, _ = run_command(down_command)
+        down_output, _ = run_docker(down_command)
         if down_output is None:
             raise RuntimeError("Compose down failed")
         print(f"{COLORS.GREEN}旧容器已移除。{COLORS.RESET}")
@@ -825,7 +823,7 @@ def perform_deployment(compose_file_path, services_to_update, yaml_parser):
     # 3. 重新启动容器
     print(f"{COLORS.BLUE}正在尝试重新启动容器...{COLORS.RESET}")
     up_command = ["compose", "up", "-d"]
-    up_output, _ = run_command(up_command)
+    up_output, _ = run_docker(up_command)
 
     if up_output is not None:
         print(f"{COLORS.GREEN}Compose up 命令执行完成。{COLORS.RESET}")
@@ -845,7 +843,7 @@ def main():
     """主函数，协调整个镜像更新过程。"""
     load_config()
 
-    check_tools_availability()
+    check_docker_availability()
     check_skopeo_availability()
 
     # 从系统获取架构和操作系统信息
