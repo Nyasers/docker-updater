@@ -5,7 +5,6 @@ import os
 import re
 import shutil
 import sys
-import platform
 from ruamel.yaml import YAML
 from enum import Enum
 
@@ -660,7 +659,7 @@ def prune_old_images():
     print(f"{COLORS.GREEN}旧版本镜像修剪完成。{COLORS.RESET}")
 
 
-def get_services_to_update(compose_file_path, yaml_parser, arch=None, _os=None):
+def get_services_to_update(compose_file_path, yaml_parser):
     """
     从 Compose 文件中获取需要更新的服务列表。
     Args:
@@ -846,16 +845,6 @@ def main():
     check_docker_availability()
     check_skopeo_availability()
 
-    # 从系统获取架构和操作系统信息
-    system_arch = platform.machine().lower()
-    system_os = platform.system().lower()
-
-    # 转换架构名称以匹配 Docker 的命名规范
-    if system_arch == "x86_64":
-        system_arch = "amd64"
-    elif system_arch == "aarch64":
-        system_arch = "arm64"
-
     yaml = YAML()
     yaml.preserve_quotes = True
     yaml.indent(mapping=2, sequence=4, offset=2)
@@ -881,9 +870,7 @@ def main():
             )
             continue
 
-        services_to_update = get_services_to_update(
-            compose_file_path, yaml, system_arch, system_os
-        )
+        services_to_update = get_services_to_update(compose_file_path, yaml)
 
         if not services_to_update:
             print(f"{COLORS.GREEN}所有镜像都已是最新版本，无需执行部署。{COLORS.RESET}")
