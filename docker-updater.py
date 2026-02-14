@@ -382,7 +382,7 @@ def parse_image_string(image_full_name):
     # 检查第一个部分是否是 registry
     # 规则：
     # 1. 包含 '.' 或 ':' 的是 registry
-    # 2. localhost 或 127.0.0.1 也是 registry
+    # 2. localhost 也是 registry
     if len(parts) > 1 and (
         "." in parts[0] or ":" in parts[0] or parts[0] == "localhost"
     ):
